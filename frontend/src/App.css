@@ -29,6 +29,15 @@ body:has(.mode-selection) {
   min-height: 90vh;
 }
 
+.container {
+  width: 100%;
+  background-color: #ffffff;
+  border: 1px solid #000000;
+  display: flex;
+  flex-direction: column;
+  height: 90vh;
+}
+
 .app:not(:has(.mode-selection)) {
   height: 90vh;
   display: flex;
@@ -42,15 +51,10 @@ body:has(.mode-selection) {
 }
 
 .mode-selection {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  width: 100%;
+  max-width: 500px;
   text-align: center;
-  padding: 60px 80px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+  padding: 40px;
 }
 
 .header {
@@ -67,6 +71,82 @@ body:has(.mode-selection) {
   font-size: 28px;
   font-weight: 600;
   letter-spacing: -0.5px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.room-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.room-id {
+  background-color: #000000;
+  color: #ffffff;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Iosevka', monospace;
+}
+
+.room-id:hover {
+  opacity: 0.8;
+}
+
+.join-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.room-input {
+  padding: 12px 16px;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: 'Iosevka', monospace;
+  outline: none;
+}
+
+.room-input:focus {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+.waiting-message,
+.connecting-message,
+.connected-message {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.waiting-message {
+  color: #000000;
+}
+
+.connecting-message {
+  color: #000000;
+}
+
+.connected-message {
+  color: #000000;
+}
+
+.no-messages {
+  text-align: center;
+  color: #000000;
+  padding: 40px;
+  opacity: 0.6;
 }
 
 .connection-status {
@@ -623,6 +703,12 @@ body:has(.mode-selection) {
   color: white;
   padding: 14px 28px;
   font-weight: 500;
+}
+
+.btn-send:disabled {
+  background-color: #ffffff;
+  color: #000000;
+  opacity: 1;
 }
 
 .btn-send:hover:not(:disabled) {

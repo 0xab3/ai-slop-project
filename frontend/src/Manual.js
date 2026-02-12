@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './App.css';
 
-const App = () => {
+const Manual = () => {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [localPeer, setLocalPeer] = useState(null);
   const [remotePeer, setRemotePeer] = useState(null);
   const [dataChannel, setDataChannel] = useState(null);
-  const [mode, setMode] = useState(null); // 'initiate' or 'join'
+  const [mode, setMode] = useState(null);
   const [showOffer, setShowOffer] = useState(false);
   const [offerText, setOfferText] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
@@ -24,8 +26,6 @@ const App = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-
-
   const createPeerConnection = () => {
     const pc = new RTCPeerConnection({
       iceServers: [
@@ -38,7 +38,6 @@ const App = () => {
       if (event.candidate) {
         console.log('🧊 New ICE candidate:', event.candidate);
         setLocalIceCandidates(prev => [...prev, event.candidate]);
-        console.log(`📍 Total local ICE candidates: ${localIceCandidates.length + 1}`);
       } else {
         console.log('🏁 ICE gathering complete - no more candidates');
       }
@@ -46,22 +45,11 @@ const App = () => {
 
     pc.onicegatheringstatechange = () => {
       console.log('ICE gathering state:', pc.iceGatheringState);
-      if (pc.iceGatheringState === 'complete') {
-        console.log('ICE gathering complete');
-      }
     };
 
     pc.onconnectionstatechange = () => {
       console.log('Connection state:', pc.connectionState);
       setConnectionStatus(pc.connectionState);
-      
-      if (pc.connectionState === 'connected') {
-        console.log('🎉 WebRTC connection established successfully!');
-        console.log('✅ ICE negotiation completed - P2P connection is active!');
-      } else if (pc.connectionState === 'failed') {
-        console.log('❌ WebRTC connection failed');
-        console.log('💡 Try checking ICE candidates and network connectivity');
-      }
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -79,8 +67,7 @@ const App = () => {
 
   const setupDataChannel = (channel) => {
     channel.onopen = () => {
-      console.log('🎉 Data channel opened - Connection is now fully established!');
-      console.log('🚀 P2P chat is ready to use!');
+      console.log('🎉 Data channel opened!');
       setConnectionStatus('connected');
     };
 
@@ -106,7 +93,6 @@ const App = () => {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     
-    // Wait for ICE gathering to complete
     await new Promise(resolve => {
       if (pc.iceGatheringState === 'complete') {
         resolve();
@@ -135,7 +121,6 @@ const App = () => {
       await pc.setLocalDescription(answer);
       console.log('Local description set successfully');
       
-      // Wait for ICE gathering to complete
       await new Promise(resolve => {
         if (pc.iceGatheringState === 'complete') {
           resolve();
@@ -186,11 +171,7 @@ const App = () => {
     try {
       const answer = JSON.parse(answerTextInput);
       await localPeer.setRemoteDescription(answer);
-      
       console.log('Connection completed with remote description');
-      console.log('Connection state after setting remote description:', localPeer.connectionState);
-      
-      // Now you can add ICE candidates
     } catch (error) {
       console.error('Error setting remote description:', error);
       alert('Invalid answer format: ' + error.message);
@@ -198,9 +179,6 @@ const App = () => {
   };
 
   const addRemoteIceCandidates = async () => {
-    console.log('🔍 ICE candidate addition CLICKED!');
-    console.log('📝 Pasted candidates length:', remoteIceCandidates.length);
-    
     if (!remoteIceCandidates.trim()) {
       setIceFeedback({ message: 'Please paste ICE candidates first', type: 'error' });
       setTimeout(() => setIceFeedback({ message: '', type: '' }), 3000);
@@ -208,34 +186,20 @@ const App = () => {
     }
 
     try {
-      console.log('🔄 Parsing ICE candidates...');
       const candidates = JSON.parse(remoteIceCandidates);
-      console.log('✅ Parsed successfully, candidate count:', Array.isArray(candidates) ? candidates.length : 'Not an array');
-      
-      // Add to the appropriate peer connection based on mode
       const targetPeer = mode === 'initiate' ? localPeer : remotePeer;
-      console.log('🎯 Target peer:', mode === 'initiate' ? 'localPeer' : 'remotePeer', targetPeer ? 'exists' : 'null');
       
       if (targetPeer) {
-        console.log('📊 Peer connection state before adding candidates:', targetPeer.connectionState);
-        
         for (const candidate of candidates) {
-          console.log('➕ Adding ICE candidate:', candidate);
           await targetPeer.addIceCandidate(candidate);
-          console.log('✅ Successfully added ICE candidate');
         }
-        console.log('🎉 All ICE candidates added successfully!');
-        setRemoteIceCandidates(''); // Clear after adding
-        console.log('📊 Peer connection state after adding candidates:', targetPeer.connectionState);
-        
-        // Show success feedback
+        setRemoteIceCandidates('');
         setIceFeedback({ 
           message: `✅ Successfully added ${candidates.length} ICE candidate(s)!`, 
           type: 'success' 
         });
         setTimeout(() => setIceFeedback({ message: '', type: '' }), 4000);
       } else {
-        console.log('❌ No target peer found');
         setIceFeedback({ message: 'Please establish connection first', type: 'error' });
         setTimeout(() => setIceFeedback({ message: '', type: '' }), 3000);
       }
@@ -253,7 +217,7 @@ const App = () => {
   const copyToClipboard = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopyFeedback('✅ Copied to clipboard!');
+      setCopyFeedback('✅ Copied!');
       setTimeout(() => setCopyFeedback(''), 2000);
     } catch (err) {
       console.error('Failed to copy text: ', err);
@@ -277,26 +241,18 @@ const App = () => {
     setInputMessage('');
   };
 
-  const getStatusColor = () => {
-    switch (connectionStatus) {
-      case 'connected': return '#4CAF50';
-      case 'connecting': return '#FF9800';
-      case 'disconnected': return '#f44336';
-      default: return '#757575';
-    }
-  };
-
   if (!mode) {
     return (
       <div className="app">
-        <div className="container mode-selection">
+        <div className="mode-selection">
           <header className="header">
             <h1>P2P Connect</h1>
+            <button onClick={() => navigate('/')} className="btn btn-secondary">← Back</button>
           </header>
           
           <div className="mode-content">
             <h2>Choose Your Role</h2>
-            <p>Do you want to start a new chat or join an existing one?</p>
+            <p>Manual copy/paste signaling mode</p>
             
             <div className="mode-buttons">
               <button 
@@ -328,9 +284,12 @@ const App = () => {
       <div className="container">
         <header className="header">
           <h1>P2P Connect</h1>
-          <div className="connection-status">
-            <span className={`status-indicator ${connectionStatus}`}></span>
-            <span>{connectionStatus}</span>
+          <div className="header-right">
+            <button onClick={() => navigate('/')} className="btn btn-secondary">← Leave</button>
+            <div className="connection-status">
+              <span className={`status-indicator ${connectionStatus}`}></span>
+              <span>{connectionStatus}</span>
+            </div>
           </div>
         </header>
 
@@ -386,7 +345,7 @@ const App = () => {
                   </div>
                 </div>
               ) : (
-                <p className="no-ice-message">No ICE candidates generated yet. {mode === 'initiate' ? 'Create an offer' : 'Accept an offer'} first.</p>
+                <p className="no-ice-message">No ICE candidates generated yet.</p>
               )}
             </div>
           )}
@@ -416,7 +375,6 @@ const App = () => {
           )}
         </div>
 
-        {/* Status Display */}
         {iceFeedback.message && (
           <div className="status-feedback">
             <p className={iceFeedback.type === 'success' ? 'success' : 'error'}>
@@ -424,8 +382,6 @@ const App = () => {
             </p>
           </div>
         )}
-
-
 
         {showOffer && (
           <div className="modal-overlay">
@@ -515,4 +471,4 @@ const App = () => {
   );
 };
 
-export default App;
+export default Manual;

@@ -1,29 +1,16 @@
 {
   "name": "webrtc-chat-app",
   "version": "1.0.0",
-  "description": "WebRTC chat application using data channels",
-  "main": "index.js",
+  "description": "WebRTC P2P Chat with Signaling Server",
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "server": "node server/index.js",
+    "server:dev": "node server/index.js",
+    "frontend": "cd frontend && npm start",
+    "frontend:build": "cd frontend && npm run build",
+    "install:all": "cd frontend && npm install && cd ../server && npm install",
+    "start": "node server/index.js",
+    "make": "cd frontend && npm run build && cd .. && node server/index.js"
   },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "^5.0.1"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  }
+  "keywords": ["webrtc", "p2p", "chat", "signaling"],
+  "license": "MIT"
 }
