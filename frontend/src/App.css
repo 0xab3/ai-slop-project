@@ -914,6 +914,7 @@ body:has(.mode-selection) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .messages {
@@ -924,8 +925,7 @@ body:has(.mode-selection) {
   flex-direction: column;
   gap: 16px;
   background-color: #ffffff;
-  max-height: 50vh;
-  min-height: 50vh;
+  min-height: 0;
 }
 
 .messages::-webkit-scrollbar {
