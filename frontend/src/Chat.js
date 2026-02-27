@@ -493,19 +493,19 @@ const Chat = () => {
           
           {waitingForPeer && (
             <div className="waiting-message">
-              ⏳ Waiting for peer to join...
+              Waiting for peer to join...
             </div>
           )}
           
           {!waitingForPeer && connectionStatus === 'disconnected' && (
             <div className="connecting-message">
-              🔄 Connecting...
+              Connecting...
             </div>
           )}
           
           {connectionStatus === 'connected' && (
             <div className="connected-message">
-              ✅ P2P Connection established!
+              P2P Connection established!
             </div>
           )}
         </div>
@@ -561,9 +561,21 @@ const Chat = () => {
                   playsInline 
                   muted 
                   className="local-video"
-                  onClick={() => localVideoRef.current?.play()}
+                  onClick={() => {
+                    setShowVideoDropdown(!showVideoDropdown);
+                  }}
                 />
                 {isScreenSharing && <span className="screen-share-badge">Screen</span>}
+                {showVideoDropdown && (
+                  <div className="video-dropdown" style={{ position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)', minWidth: '150px' }}>
+                    <button onClick={() => { startVideoCall(); setShowVideoDropdown(false); }} className="dropdown-item">
+                      Camera
+                    </button>
+                    <button onClick={() => { startScreenShare(); setShowVideoDropdown(false); }} className="dropdown-item">
+                      Screen Share
+                    </button>
+                  </div>
+                )}
               </div>
               <button onClick={stopVideoCall} className="btn btn-secondary stop-video-btn">
                 End Video
@@ -646,15 +658,15 @@ const Chat = () => {
                   className="btn btn-secondary"
                   disabled={connectionStatus !== 'connected'}
                 >
-                  📹
+                  Video
                 </button>
                 {showVideoDropdown && (
-                  <div className="video-dropdown">
+                  <div className="video-dropdown" style={{ minWidth: '150px' }}>
                     <button onClick={startVideoCall} className="dropdown-item">
-                      📷 Camera
+                      Camera
                     </button>
                     <button onClick={startScreenShare} className="dropdown-item">
-                      🖥️ Screen Share
+                      Screen Share
                     </button>
                   </div>
                 )}
