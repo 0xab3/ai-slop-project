@@ -197,6 +197,25 @@ io.on('connection', (socket) => {
     emitToUser(to, 'call-rejected', { from });
   });
 
+  // Video request
+  socket.on('video-request', ({ to, from, type }) => {
+    console.log(`Video request: from=${from}, to=${to}, type=${type}`);
+    console.log(`userConnections map:`, Array.from(userConnections.keys()));
+    emitToUser(to, 'video-request-received', { from, type });
+  });
+
+  // Video accepted
+  socket.on('video-accepted', ({ to, from }) => {
+    console.log(`Video accepted: ${from} accepted from ${to}`);
+    emitToUser(to, 'video-accepted', { from });
+  });
+
+  // Video rejected
+  socket.on('video-rejected', ({ to, from }) => {
+    console.log(`Video rejected: ${from} rejected from ${to}`);
+    emitToUser(to, 'video-rejected', { from });
+  });
+
   // Join a room
   socket.on('join-room', ({ roomId, peerId }) => {
     const room = rooms.get(roomId);

@@ -23,8 +23,67 @@ const Chat = () => {
   const [roomReady, setRoomReady] = useState(false);
   const [waitingForPeer, setWaitingForPeer] = useState(false);
   
+  // Video state
+  const [isVideoCall, setIsVideoCall] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [showVideoDropdown, setShowVideoDropdown] = useState(false);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  
+  // Video request state
+  const [videoRequest, setVideoRequest] = useState(null);
+  const [waitingForVideoAccept, setWaitingForVideoAccept] = useState(false);
+  const [videoRejected, setVideoRejected] = useState(false);
+  
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const videoTrackRef = useRef(null);
+  const screenTrackRef = useRef(null);
+  
   const messagesEndRef = useRef(null);
   const dataChannelRef = useRef(null);
+
+  // Set local video srcObject when stream changes
+  useEffect(() => {
+    if (localStream) {
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStream;
+        localVideoRef.current.play().catch(e => console.log('Play error:', e));
+      } else {
+        const timer = setTimeout(() => {
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = localStream;
+            localVideoRef.current.play().catch(e => console.log('Play error:', e));
+          }
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [localStream]);
+
+  // Set remote video srcObject when stream changes
+  useEffect(() => {
+    console.log('remoteStream effect running, remoteStream:', remoteStream, 'videoRef:', !!remoteVideoRef.current);
+    if (remoteStream) {
+      if (remoteVideoRef.current) {
+        console.log('Setting remote video srcObject...');
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.play().catch(e => console.log('Play error:', e));
+        console.log('Remote video srcObject set!');
+      } else {
+        // Video element not ready yet, wait for next render
+        console.log('Video ref not ready, waiting...');
+        const timer = setTimeout(() => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play().catch(e => console.log('Play error:', e));
+            console.log('Remote video srcObject set after timeout!');
+          }
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [remoteStream]);
 
   if (!toUser) {
     return (
@@ -47,6 +106,9 @@ const Chat = () => {
     // Connect to signaling server
     const newSocket = io(SOCKET_URL);
     setSocket(newSocket);
+
+    // Register socket with username for video requests
+    newSocket.emit('register-socket', { username });
 
     const pc = createPeerConnection(newSocket);
     setPeerConnection(pc);
@@ -89,6 +151,18 @@ const Chat = () => {
       setConnectionStatus(pc.connectionState);
     };
 
+    pc.onnegotiationneeded = async () => {
+      console.log('Negotiation needed, creating offer...');
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('offer', { roomId, offer, fromPeerId: peerId, toPeerId: 'all' });
+        console.log('Sent new offer');
+      } catch (err) {
+        console.error('Error creating offer:', err);
+      }
+    };
+
     pc.oniceconnectionstatechange = () => {
       console.log('ICE connection state:', pc.iceConnectionState);
     };
@@ -97,6 +171,14 @@ const Chat = () => {
     pc.ondatachannel = (event) => {
       const channel = event.channel;
       setupDataChannel(channel);
+    };
+
+    // Handle incoming video tracks
+    pc.ontrack = (event) => {
+      console.log('Received remote track:', event.track.kind, 'stream:', event.streams[0]);
+      console.log('Setting remoteStream...');
+      setRemoteStream(event.streams[0]);
+      console.log('remoteStream set to:', event.streams[0]);
     };
 
     return pc;
@@ -202,6 +284,44 @@ const Chat = () => {
       setConnectionStatus('disconnected');
       setRoomReady(false);
       setWaitingForPeer(true);
+      // Reset video state
+      stopVideoCall();
+    });
+
+    // Video request handlers
+    socket.on('video-request-received', ({ from, type }) => {
+      console.log('Video request received from:', from, 'type:', type);
+      
+      // Use setTimeout to ensure state updates properly
+      setTimeout(() => {
+        setVideoRequest({ from, type });
+        console.log('videoRequest set via timeout');
+      }, 100);
+    });
+
+    socket.on('video-accepted', async ({ from }) => {
+      console.log('Video accepted by:', from);
+      setWaitingForVideoAccept(false);
+    });
+
+    socket.on('video-rejected', ({ from }) => {
+      console.log('Video rejected by:', from);
+      setWaitingForVideoAccept(false);
+      setVideoRejected(true);
+      setTimeout(() => setVideoRejected(false), 3000);
+    });
+
+    socket.on('video-accepted', async ({ from }) => {
+      console.log('Video accepted by:', from);
+      setWaitingForVideoAccept(false);
+    });
+
+    socket.on('video-rejected', ({ from }) => {
+      console.log('Video rejected by:', from);
+      setWaitingForVideoAccept(false);
+      stopVideoCall();
+      setVideoRejected(true);
+      setTimeout(() => setVideoRejected(false), 3000);
     });
 
     return () => {
@@ -213,6 +333,9 @@ const Chat = () => {
       socket.off('answer');
       socket.off('ice-candidate');
       socket.off('peer-left');
+      socket.off('video-request-received');
+      socket.off('video-accepted');
+      socket.off('video-rejected');
     };
   }, [socket, peerConnection, roomId, peerId, toUser, navigate]);
 
@@ -229,6 +352,120 @@ const Chat = () => {
     dataChannelRef.current.send(JSON.stringify(message));
     setMessages(prev => [...prev, { ...message, remote: false }]);
     setInputMessage('');
+  };
+
+  const startVideoCall = async () => {
+    console.log('Starting video call');
+    setShowVideoDropdown(false);
+    
+    if (!socket || !peerConnection) {
+      console.error('Socket or peerConnection not available');
+      return;
+    }
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      console.log('Got stream:', stream);
+      setLocalStream(stream);
+      
+      // Add tracks to peer connection
+      stream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, stream);
+      });
+      console.log('Added tracks to peer connection');
+      
+      setIsVideoCall(true);
+      setIsScreenSharing(false);
+       
+      // Send video request
+      socket.emit('video-request', { to: toUser, from: username, type: 'camera' });
+    } catch (err) {
+      console.error('Error starting video call:', err);
+      alert('Could not access camera/microphone');
+    }
+  };
+
+  const startScreenShare = async () => {
+    console.log('Starting screen share');
+    setShowVideoDropdown(false);
+    
+    if (!socket || !peerConnection) {
+      console.error('Socket or peerConnection not available');
+      return;
+    }
+    
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      console.log('Got stream:', stream);
+      setLocalStream(stream);
+      
+      // Add tracks to peer connection
+      stream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, stream);
+      });
+      console.log('Added tracks to peer connection');
+      
+      setIsVideoCall(true);
+      setIsScreenSharing(true);
+      
+      // Send video request
+      socket.emit('video-request', { to: toUser, from: username, type: 'screen' });
+      setWaitingForVideoAccept(true);
+    } catch (err) {
+      console.error('Error starting screen share:', err);
+    }
+  };
+
+  const stopVideoCall = () => {
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+
+    if (screenTrackRef.current) {
+      screenTrackRef.current = null;
+    }
+
+    if (peerConnection) {
+      const senders = peerConnection.getSenders();
+      senders.forEach(sender => {
+        if (sender.track && (sender.track.kind === 'video' || sender.track.kind === 'audio')) {
+          peerConnection.removeTrack(sender);
+        }
+      });
+    }
+
+    setRemoteStream(null);
+    videoTrackRef.current = null;
+    setIsVideoCall(false);
+    setIsScreenSharing(false);
+  };
+
+  const acceptVideoRequest = async () => {
+    if (!videoRequest) return;
+    
+    const { from, type } = videoRequest;
+    console.log('Accepting video request from:', from, 'type:', type);
+    
+    // Tell the caller we accepted
+    socket.emit('video-accepted', { to: from, from: username });
+    console.log('Sent video-accepted to:', from);
+    
+    // Show the video window - remote peer's video will appear via ontrack
+    setIsVideoCall(true);
+    setIsScreenSharing(type === 'screen');
+    
+    setVideoRequest(null);
+    console.log('Video window should be showing now, waiting for remote track...');
+  };
+
+  const declineVideoRequest = () => {
+    if (!videoRequest) return;
+    
+    const { from } = videoRequest;
+    
+    socket.emit('video-rejected', { to: from, from: username });
+    setVideoRequest(null);
   };
 
   return (
@@ -273,46 +510,165 @@ const Chat = () => {
           )}
         </div>
 
-        <div className="chat-container">
-          <div className="messages">
-            {messages.length === 0 && (
-              <div className="no-messages">
-                {connectionStatus === 'connected' 
-                  ? 'No messages yet. Start chatting!' 
-                  : 'Waiting for connection...'}
-              </div>
-            )}
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`message ${message.remote ? 'remote' : 'local'}`}
-              >
-                <div className="message-content">{message.text}</div>
-                <div className="message-time">{message.timestamp}</div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
+        {waitingForVideoAccept && (
+          <div className="status-message">Waiting for peer to accept video...</div>
+        )}
 
-          <div className="input-container">
-            <input
-              type="text"
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-              placeholder={connectionStatus === 'connected' ? "Type a message..." : "Waiting for connection..."}
-              className="message-input"
-              disabled={connectionStatus !== 'connected'}
-            />
-            <button
-              onClick={sendMessage}
-              className="btn btn-send"
-              disabled={connectionStatus !== 'connected' || !inputMessage.trim()}
-            >
-              Send
-            </button>
+        {videoRejected && (
+          <div className="status-message">Peer declined video request</div>
+        )}
+
+        {videoRequest && (
+          <div className="modal-overlay">
+            <div className="modal">
+              <div className="modal-header">
+                <h3>Video Request</h3>
+              </div>
+              <div className="modal-content">
+                <p>{videoRequest.from} wants to {videoRequest.type === 'screen' ? 'share screen' : 'video chat'} with you</p>
+                <div className="modal-actions">
+                  <button onClick={acceptVideoRequest} className="btn btn-primary">Accept</button>
+                  <button onClick={declineVideoRequest} className="btn btn-secondary">Decline</button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
+
+        {isVideoCall || videoRequest ? (
+          <div className="video-chat-layout">
+            <div className="video-area">
+              <div className="video-main">
+                <video 
+                  ref={remoteVideoRef}
+                  srcObject={remoteStream}
+                  autoPlay 
+                  playsInline 
+                  className="remote-video"
+                  onClick={() => remoteVideoRef.current?.play()}
+                />
+                {!remoteStream && (
+                  <div className="video-placeholder">
+                    Waiting for peer video...
+                  </div>
+                )}
+              </div>
+              <div className="video-local">
+                <video 
+                  ref={localVideoRef}
+                  srcObject={localStream}
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  className="local-video"
+                  onClick={() => localVideoRef.current?.play()}
+                />
+                {isScreenSharing && <span className="screen-share-badge">Screen</span>}
+              </div>
+              <button onClick={stopVideoCall} className="btn btn-secondary stop-video-btn">
+                End Video
+              </button>
+            </div>
+            <div className="chat-area">
+              <div className="messages">
+                {messages.length === 0 && (
+                  <div className="no-messages">
+                    No messages yet. Start chatting!
+                  </div>
+                )}
+                {messages.map((message, index) => (
+                  <div
+                    key={index}
+                    className={`message ${message.remote ? 'remote' : 'local'}`}
+                  >
+                    <div className="message-content">{message.text}</div>
+                    <div className="message-time">{message.timestamp}</div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="input-container">
+                <input
+                  type="text"
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                  placeholder="Type a message..."
+                  className="message-input"
+                  disabled={connectionStatus !== 'connected'}
+                />
+                <button
+                  onClick={sendMessage}
+                  className="btn btn-send"
+                  disabled={connectionStatus !== 'connected' || !inputMessage.trim()}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="chat-container">
+            <div className="messages">
+              {messages.length === 0 && (
+                <div className="no-messages">
+                  {connectionStatus === 'connected' 
+                    ? 'No messages yet. Start chatting!' 
+                    : 'Waiting for connection...'}
+                </div>
+              )}
+              {messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`message ${message.remote ? 'remote' : 'local'}`}
+                >
+                  <div className="message-content">{message.text}</div>
+                  <div className="message-time">{message.timestamp}</div>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <div className="input-container">
+              <input
+                type="text"
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                placeholder={connectionStatus === 'connected' ? "Type a message..." : "Waiting for connection..."}
+                className="message-input"
+                disabled={connectionStatus !== 'connected'}
+              />
+              <div className="video-dropdown-container">
+                <button
+                  onClick={() => setShowVideoDropdown(!showVideoDropdown)}
+                  className="btn btn-secondary"
+                  disabled={connectionStatus !== 'connected'}
+                >
+                  📹
+                </button>
+                {showVideoDropdown && (
+                  <div className="video-dropdown">
+                    <button onClick={startVideoCall} className="dropdown-item">
+                      📷 Camera
+                    </button>
+                    <button onClick={startScreenShare} className="dropdown-item">
+                      🖥️ Screen Share
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={sendMessage}
+                className="btn btn-send"
+                disabled={connectionStatus !== 'connected' || !inputMessage.trim()}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
