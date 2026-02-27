@@ -1,13 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import './App.css';
 
 const SOCKET_URL = window.location.origin;
 
 const Chat = () => {
-  const { roomId } = useParams();
   const navigate = useNavigate();
+  
+  const [toUser, setToUser] = useState(() => localStorage.getItem('callWith'));
+  const [username] = useState(() => localStorage.getItem('username'));
+  
+  const roomId = username && toUser ? [username, toUser].sort().join('_') : '';
   
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -22,8 +26,23 @@ const Chat = () => {
   const messagesEndRef = useRef(null);
   const dataChannelRef = useRef(null);
 
+  if (!toUser) {
+    return (
+      <div className="app">
+        <div className="container">
+          <p>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !username || !toUser) {
+      if (username && !toUser) {
+        navigate('/dashboard');
+      }
+      return;
+    }
 
     // Connect to signaling server
     const newSocket = io(SOCKET_URL);
@@ -39,7 +58,7 @@ const Chat = () => {
       newSocket.disconnect();
       pc.close();
     };
-  }, [roomId, peerId]);
+  }, [roomId, peerId, username, toUser, navigate]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -195,7 +214,7 @@ const Chat = () => {
       socket.off('ice-candidate');
       socket.off('peer-left');
     };
-  }, [socket, peerConnection, roomId, peerId, navigate]);
+  }, [socket, peerConnection, roomId, peerId, toUser, navigate]);
 
   const sendMessage = () => {
     if (!inputMessage.trim() || !dataChannelRef.current || dataChannelRef.current.readyState !== 'open') {
@@ -212,18 +231,16 @@ const Chat = () => {
     setInputMessage('');
   };
 
-  const copyRoomId = () => {
-    navigator.clipboard.writeText(roomId);
-    alert('Room ID copied to clipboard!');
-  };
-
   return (
     <div className="app">
       <div className="container">
         <header className="header">
           <h1>P2P Connect</h1>
           <div className="header-right">
-            <button onClick={() => navigate('/')} className="btn btn-secondary">← Leave</button>
+            <button onClick={() => {
+              localStorage.removeItem('callWith');
+              navigate('/dashboard');
+            }} className="btn btn-secondary">← Leave</button>
             <div className="connection-status">
               <span className={`status-indicator ${connectionStatus}`}></span>
               <span>{connectionStatus}</span>
@@ -233,8 +250,8 @@ const Chat = () => {
 
         <div className="connection-controls">
           <div className="room-info">
-            <span>Room ID: </span>
-            <code className="room-id" onClick={copyRoomId} title="Click to copy">{roomId}</code>
+            <span>Talking to </span>
+            <code className="room-id" title="Chatting with">{toUser}</code>
           </div>
           
           {waitingForPeer && (

@@ -1,10 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './App.css';
 
 const Landing = () => {
   const navigate = useNavigate();
   const [joinRoomId, setJoinRoomId] = useState('');
+
+  useEffect(() => {
+    const username = localStorage.getItem('username');
+    if (username) {
+      navigate('/dashboard');
+    }
+  }, [navigate]);
 
   const generateRoomId = () => {
     return Math.random().toString(36).substring(2, 10);
