@@ -44,6 +44,10 @@ const Chat = () => {
   const messagesEndRef = useRef(null);
   const dataChannelRef = useRef(null);
 
+  const [incomingFile, setIncomingFile] = useState(null);
+  const [fileChunks, setFileChunks] = useState([]);
+  const [receivedFileData, setReceivedFileData] = useState(null);
+
   // Set local video srcObject when stream changes
   useEffect(() => {
     if (localStream) {
@@ -202,21 +206,69 @@ const Chat = () => {
     dataChannelRef.current = channel;
     setDataChannel(channel);
 
+    let fileMeta = null;
+    let receivedSize = 0;
+    const chunks = [];
+
     channel.onopen = () => {
       console.log('🎉 Data channel opened!');
       setConnectionStatus('connected');
     };
 
     channel.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      setMessages(prev => [...prev, { ...message, remote: true }]);
-      
-      // Save received message to IndexedDB
-      saveMessage({
-        sender: toUser,
-        receiver: username,
-        text: message.text
-      }).catch(err => console.error('Error saving received message:', err));
+      const data = event.data;
+
+      if (typeof data === 'string') {
+        const message = JSON.parse(data);
+        
+        if (message.type === 'file-start') {
+          fileMeta = {
+            fileName: message.fileName,
+            fileSize: message.fileSize,
+            mimeType: message.mimeType
+          };
+          receivedSize = 0;
+          chunks.length = 0;
+          console.log('Receiving file:', fileMeta.fileName, 'Size:', fileMeta.fileSize);
+          return;
+        }
+
+        if (message.type === 'text') {
+          setMessages(prev => [...prev, { ...message, remote: true }]);
+          saveMessage({
+            sender: toUser,
+            receiver: username,
+            text: message.text
+          }).catch(err => console.error('Error saving received message:', err));
+        }
+      } else if (data instanceof ArrayBuffer || data instanceof Blob) {
+        if (fileMeta && chunks) {
+          chunks.push(data);
+          receivedSize += data.byteLength || data.size;
+          console.log('Received chunk:', receivedSize, '/', fileMeta.fileSize);
+
+          if (chunks.length > 0 && receivedSize >= fileMeta.fileSize) {
+            console.log('File received completely, saving...');
+            try {
+              const blob = new Blob(chunks, { type: fileMeta.mimeType });
+              const fileInfo = { fileName: fileMeta.fileName, blob: blob };
+              
+              setMessages(prev => [...prev, { 
+                text: `📎 Received file: ${fileMeta.fileName}`, 
+                remote: true,
+                isFile: true,
+                fileInfo: fileInfo
+              }]);
+            } catch (err) {
+              console.error('Error saving file:', err);
+            }
+            
+            fileMeta = null;
+            chunks.length = 0;
+            receivedSize = 0;
+          }
+        }
+      }
     };
 
     channel.onclose = () => {
@@ -366,6 +418,7 @@ const Chat = () => {
     }
 
     const message = {
+      type: 'text',
       text: inputMessage,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
@@ -497,6 +550,77 @@ const Chat = () => {
     setVideoRequest(null);
   };
 
+  const fileInputRef = useRef(null);
+
+  const handleFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      console.log('File selected:', file);
+      sendFile(file);
+    }
+    event.target.value = '';
+  };
+
+  const downloadReceivedFile = (fileInfo) => {
+    if (!fileInfo || !fileInfo.blob) return;
+    const url = URL.createObjectURL(fileInfo.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileInfo.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  };
+
+  const sendFile = (file) => {
+    if (!dataChannelRef.current || dataChannelRef.current.readyState !== 'open') {
+      console.error('Data channel not open');
+      return;
+    }
+
+    dataChannelRef.current.send(JSON.stringify({
+      type: 'file-start',
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type
+    }));
+
+    const CHUNK_SIZE = 16 * 1024;
+    let offset = 0;
+
+    const sendChunk = () => {
+      const chunk = file.slice(offset, offset + CHUNK_SIZE);
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        const arrayBuffer = e.target.result;
+        dataChannelRef.current.send(arrayBuffer);
+        
+        offset += CHUNK_SIZE;
+        if (offset < file.size) {
+          setTimeout(sendChunk, 10);
+        } else {
+          console.log('File sent successfully');
+        }
+      };
+      
+      reader.readAsArrayBuffer(chunk);
+    };
+
+    sendChunk();
+
+    setMessages(prev => [...prev, { 
+      text: `📎 Sent file: ${file.name}`, 
+      remote: false,
+      isFile: true 
+    }]);
+  };
+
+  const openFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
   return (
     <div className="app">
       <div className="container">
@@ -620,7 +744,8 @@ const Chat = () => {
                 {messages.map((message, index) => (
                   <div
                     key={index}
-                    className={`message ${message.remote ? 'remote' : 'local'}`}
+                    className={`message ${message.remote ? 'remote' : 'local'} ${message.isFile ? 'file-message' : ''}`}
+                    onClick={() => message.fileInfo && downloadReceivedFile(message.fileInfo)}
                   >
                     <div className="message-content">{message.text}</div>
                     <div className="message-time">{message.timestamp}</div>
@@ -630,6 +755,20 @@ const Chat = () => {
               </div>
 
               <div className="input-container">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileSelect}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  onClick={openFilePicker}
+                  className="btn btn-secondary"
+                  disabled={connectionStatus !== 'connected'}
+                  title="Send file"
+                >
+                  +
+                </button>
                 <input
                   type="text"
                   value={inputMessage}
@@ -662,7 +801,8 @@ const Chat = () => {
               {messages.map((message, index) => (
                 <div
                   key={index}
-                  className={`message ${message.remote ? 'remote' : 'local'}`}
+                  className={`message ${message.remote ? 'remote' : 'local'} ${message.isFile ? 'file-message' : ''}`}
+                  onClick={() => message.fileInfo && downloadReceivedFile(message.fileInfo)}
                 >
                   <div className="message-content">{message.text}</div>
                   <div className="message-time">{message.timestamp}</div>
@@ -672,6 +812,20 @@ const Chat = () => {
             </div>
 
             <div className="input-container">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+              <button
+                onClick={openFilePicker}
+                className="btn btn-secondary"
+                disabled={connectionStatus !== 'connected'}
+                title="Send file"
+              >
+                📎
+              </button>
               <input
                 type="text"
                 value={inputMessage}
