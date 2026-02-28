@@ -43,10 +43,14 @@ const Chat = () => {
   
   const messagesEndRef = useRef(null);
   const dataChannelRef = useRef(null);
+  const fileMetaRef = useRef(null);
+  const chunksRef = useRef([]);
+  const receivedSizeRef = useRef(0);
 
   const [incomingFile, setIncomingFile] = useState(null);
   const [fileChunks, setFileChunks] = useState([]);
   const [receivedFileData, setReceivedFileData] = useState(null);
+  const [fileRequest, setFileRequest] = useState(null);
 
   // Set local video srcObject when stream changes
   useEffect(() => {
@@ -206,9 +210,9 @@ const Chat = () => {
     dataChannelRef.current = channel;
     setDataChannel(channel);
 
-    let fileMeta = null;
-    let receivedSize = 0;
-    const chunks = [];
+    fileMetaRef.current = null;
+    receivedSizeRef.current = 0;
+    chunksRef.current = [];
 
     channel.onopen = () => {
       console.log('🎉 Data channel opened!');
@@ -222,14 +226,25 @@ const Chat = () => {
         const message = JSON.parse(data);
         
         if (message.type === 'file-start') {
-          fileMeta = {
-            fileName: message.fileName,
-            fileSize: message.fileSize,
-            mimeType: message.mimeType
-          };
-          receivedSize = 0;
-          chunks.length = 0;
-          console.log('Receiving file:', fileMeta.fileName, 'Size:', fileMeta.fileSize);
+          if (!fileMetaRef.current) {
+            setFileRequest({
+              fileName: message.fileName,
+              fileSize: message.fileSize,
+              mimeType: message.mimeType,
+              chunks: [],
+              receivedSize: 0
+            });
+            console.log('File request:', message.fileName, 'Size:', message.fileSize);
+          }
+          return;
+        }
+
+        if (message.type === 'file-accept') {
+          console.log('Peer accepted file transfer, starting...');
+          if (fileMetaRef.current) {
+            fileMetaRef.current.isSending = true;
+            continueFileSend();
+          }
           return;
         }
 
@@ -242,19 +257,49 @@ const Chat = () => {
           }).catch(err => console.error('Error saving received message:', err));
         }
       } else if (data instanceof ArrayBuffer || data instanceof Blob) {
-        if (fileMeta && chunks) {
-          chunks.push(data);
-          receivedSize += data.byteLength || data.size;
-          console.log('Received chunk:', receivedSize, '/', fileMeta.fileSize);
-
-          if (chunks.length > 0 && receivedSize >= fileMeta.fileSize) {
+        if (fileRequest) {
+          const updatedRequest = {
+            ...fileRequest,
+            chunks: [...fileRequest.chunks, data],
+            receivedSize: fileRequest.receivedSize + (data.byteLength || data.size)
+          };
+          setFileRequest(updatedRequest);
+          
+          if (updatedRequest.receivedSize >= updatedRequest.fileSize) {
             console.log('File received completely, saving...');
             try {
-              const blob = new Blob(chunks, { type: fileMeta.mimeType });
-              const fileInfo = { fileName: fileMeta.fileName, blob: blob };
+              const blob = new Blob(updatedRequest.chunks, { type: updatedRequest.mimeType });
+              const fileInfo = { fileName: updatedRequest.fileName, blob: blob };
               
               setMessages(prev => [...prev, { 
-                text: `📎 Received file: ${fileMeta.fileName}`, 
+                text: `📎 Received file: ${updatedRequest.fileName}`, 
+                remote: true,
+                isFile: true,
+                fileInfo: fileInfo
+              }]);
+            } catch (err) {
+              console.error('Error saving file:', err);
+            }
+            setFileRequest(null);
+          }
+          return;
+        }
+        
+        if (fileMetaRef.current && chunksRef.current) {
+          chunksRef.current.push(data);
+          receivedSizeRef.current += data.byteLength || data.size;
+          console.log('Received chunk:', receivedSizeRef.current, '/', fileMetaRef.current.fileSize);
+
+          if (chunksRef.current.length > 0 && receivedSizeRef.current >= fileMetaRef.current.fileSize) {
+            console.log('File received completely, saving...');
+            const fileName = fileMetaRef.current.fileName;
+            const mimeType = fileMetaRef.current.mimeType;
+            try {
+              const blob = new Blob(chunksRef.current, { type: mimeType });
+              const fileInfo = { fileName: fileName, blob: blob };
+              
+              setMessages(prev => [...prev, { 
+                text: `📎 Received file: ${fileName}`, 
                 remote: true,
                 isFile: true,
                 fileInfo: fileInfo
@@ -263,10 +308,12 @@ const Chat = () => {
               console.error('Error saving file:', err);
             }
             
-            fileMeta = null;
-            chunks.length = 0;
-            receivedSize = 0;
+            fileMetaRef.current = null;
+            chunksRef.current = [];
+            receivedSizeRef.current = 0;
+            setFileRequest(null);
           }
+          return;
         }
       }
     };
@@ -550,6 +597,54 @@ const Chat = () => {
     setVideoRequest(null);
   };
 
+  const acceptFileRequest = () => {
+    if (!fileRequest) return;
+    
+    fileMetaRef.current = {
+      fileName: fileRequest.fileName,
+      fileSize: fileRequest.fileSize,
+      mimeType: fileRequest.mimeType
+    };
+    chunksRef.current = [];
+    receivedSizeRef.current = 0;
+    
+    if (fileRequest.chunks.length > 0) {
+      chunksRef.current.push(...fileRequest.chunks);
+      receivedSizeRef.current = fileRequest.receivedSize;
+    }
+    
+    if (receivedSizeRef.current >= fileMetaRef.current.fileSize) {
+      console.log('File already complete, saving...');
+      try {
+        const blob = new Blob(chunksRef.current, { type: fileMetaRef.current.mimeType });
+        const fileInfo = { fileName: fileMetaRef.current.fileName, blob: blob };
+        
+        setMessages(prev => [...prev, { 
+          text: `📎 Received file: ${fileMetaRef.current.fileName}`, 
+          remote: true,
+          isFile: true,
+          fileInfo: fileInfo
+        }]);
+      } catch (err) {
+        console.error('Error saving file:', err);
+      }
+      fileMetaRef.current = null;
+      chunksRef.current = [];
+      receivedSizeRef.current = 0;
+      setFileRequest(null);
+      return;
+    }
+
+    dataChannelRef.current.send(JSON.stringify({ type: 'file-accept' }));
+    console.log('Sent file-accept');
+    
+    setFileRequest(null);
+  };
+
+  const declineFileRequest = () => {
+    setFileRequest(null);
+  };
+
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (event) => {
@@ -579,6 +674,15 @@ const Chat = () => {
       return;
     }
 
+    fileMetaRef.current = {
+      file: file,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      isSending: false,
+      offset: 0
+    };
+
     dataChannelRef.current.send(JSON.stringify({
       type: 'file-start',
       fileName: file.name,
@@ -586,22 +690,40 @@ const Chat = () => {
       mimeType: file.type
     }));
 
+    setMessages(prev => [...prev, { 
+      text: `📎 Sent file: ${file.name}`, 
+      remote: false,
+      isFile: true,
+      fileStatus: 'waiting'
+    }]);
+  };
+
+  const continueFileSend = () => {
+    if (!fileMetaRef.current || !fileMetaRef.current.isSending) return;
+    
+    const file = fileMetaRef.current;
     const CHUNK_SIZE = 16 * 1024;
-    let offset = 0;
 
     const sendChunk = () => {
-      const chunk = file.slice(offset, offset + CHUNK_SIZE);
+      if (!fileMetaRef.current || !fileMetaRef.current.isSending) return;
+      if (dataChannelRef.current.readyState !== 'open') return;
+
+      const chunk = file.file.slice(file.offset, file.offset + CHUNK_SIZE);
       const reader = new FileReader();
       
       reader.onload = (e) => {
+        if (!fileMetaRef.current || !fileMetaRef.current.isSending) return;
+        
         const arrayBuffer = e.target.result;
         dataChannelRef.current.send(arrayBuffer);
         
-        offset += CHUNK_SIZE;
-        if (offset < file.size) {
+        file.offset += CHUNK_SIZE;
+        console.log('Sent chunk:', file.offset, '/', file.fileSize);
+        if (file.offset < file.fileSize) {
           setTimeout(sendChunk, 10);
         } else {
           console.log('File sent successfully');
+          fileMetaRef.current = null;
         }
       };
       
@@ -609,12 +731,6 @@ const Chat = () => {
     };
 
     sendChunk();
-
-    setMessages(prev => [...prev, { 
-      text: `📎 Sent file: ${file.name}`, 
-      remote: false,
-      isFile: true 
-    }]);
   };
 
   const openFilePicker = () => {
@@ -682,6 +798,24 @@ const Chat = () => {
                 <div className="modal-actions">
                   <button onClick={acceptVideoRequest} className="btn btn-primary">Accept</button>
                   <button onClick={declineVideoRequest} className="btn btn-secondary">Decline</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {fileRequest && (
+          <div className="modal-overlay">
+            <div className="modal">
+              <div className="modal-header">
+                <h3>File Transfer</h3>
+              </div>
+              <div className="modal-content">
+                <p>{toUser} wants to send you a file: <strong>{fileRequest.fileName}</strong></p>
+                <p>Size: {(fileRequest.fileSize / 1024).toFixed(2)} KB</p>
+                <div className="modal-actions">
+                  <button onClick={acceptFileRequest} className="btn btn-primary">Accept</button>
+                  <button onClick={declineFileRequest} className="btn btn-secondary">Decline</button>
                 </div>
               </div>
             </div>
