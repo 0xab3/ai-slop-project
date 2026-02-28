@@ -277,6 +277,12 @@ const Chat = () => {
                 isFile: true,
                 fileInfo: fileInfo
               }]);
+              
+              saveMessage({
+                sender: toUser,
+                receiver: username,
+                text: `📎 Received file: ${updatedRequest.fileName}`
+              }).catch(err => console.error('Error saving received file message:', err));
             } catch (err) {
               console.error('Error saving file:', err);
             }
@@ -304,6 +310,12 @@ const Chat = () => {
                 isFile: true,
                 fileInfo: fileInfo
               }]);
+              
+              saveMessage({
+                sender: toUser,
+                receiver: username,
+                text: `📎 Received file: ${fileName}`
+              }).catch(err => console.error('Error saving received file message:', err));
             } catch (err) {
               console.error('Error saving file:', err);
             }
@@ -625,6 +637,12 @@ const Chat = () => {
           isFile: true,
           fileInfo: fileInfo
         }]);
+        
+        saveMessage({
+          sender: toUser,
+          receiver: username,
+          text: `📎 Received file: ${fileMetaRef.current.fileName}`
+        }).catch(err => console.error('Error saving received file message:', err));
       } catch (err) {
         console.error('Error saving file:', err);
       }
@@ -696,6 +714,12 @@ const Chat = () => {
       isFile: true,
       fileStatus: 'waiting'
     }]);
+    
+    saveMessage({
+      sender: username,
+      receiver: toUser,
+      text: `📎 Sent file: ${file.name}`
+    }).catch(err => console.error('Error saving sent file message:', err));
   };
 
   const continueFileSend = () => {
