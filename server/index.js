@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const { Low } = require('lowdb');
+const { JSONFile } = require('lowdb/node');
 
 const app = express();
 const server = http.createServer(app);
@@ -19,11 +21,72 @@ app.use(express.json());
 // Serve static files from React build (in production)
 app.use(express.static(path.join(__dirname, '../frontend/build')));
 
-// User storage (in-memory)
-const users = new Map(); // username -> { password }
+// Initialize lowdb
+const adapter = new JSONFile(path.join(__dirname, 'db.json'));
+const db = new Low(adapter, {
+  users: [],
+  contacts: []
+});
+
+// Initialize database file if it doesn't exist
+db.read().then(() => {
+  if (!db.data) {
+    db.data = { users: [], contacts: [] };
+    db.write();
+  }
+}).catch(err => {
+  console.log('Initializing new database...');
+  db.data = { users: [], contacts: [] };
+  db.write();
+});
+
+// Helper functions for database
+async function getUser(username) {
+  await db.read();
+  return db.data.users.find(u => u.username === username);
+}
+
+async function addUser(username, password) {
+  await db.read();
+  db.data.users.push({ username, password });
+  await db.write();
+}
+
+async function getContacts(username) {
+  await db.read();
+  return db.data.contacts
+    .filter(c => c.username === username)
+    .map(c => c.contact);
+}
+
+async function addContact(username, contact) {
+  await db.read();
+  // Add bidirectional
+  if (!db.data.contacts.find(c => c.username === username && c.contact === contact)) {
+    db.data.contacts.push({ username, contact });
+  }
+  if (!db.data.contacts.find(c => c.username === contact && c.contact === username)) {
+    db.data.contacts.push({ username: contact, contact: username });
+  }
+  await db.write();
+}
+
+async function removeContact(username, contact) {
+  await db.read();
+  db.data.contacts = db.data.contacts.filter(
+    c => !(c.username === username && c.contact === contact) &&
+         !(c.username === contact && c.contact === username)
+  );
+  await db.write();
+}
+
+async function userExists(username) {
+  await db.read();
+  return db.data.users.some(u => u.username === username);
+}
+
+// In-memory storage for active connections
 const userConnections = new Map(); // username -> Set of socket objects
-const contacts = new Map(); // username -> Set of contacts
-const pendingCalls = new Map(); // callId -> { from, to, timestamp }
 
 // Store active rooms
 const rooms = new Map();
@@ -43,35 +106,35 @@ function getRoomId(userA, userB) {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', rooms: rooms.size, users: users.size });
+  res.json({ status: 'ok', rooms: rooms.size });
 });
 
 // Auth endpoints
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
   
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
   }
   
-  if (users.has(username)) {
+  const exists = await userExists(username);
+  if (exists) {
     return res.status(409).json({ error: 'Username already exists' });
   }
   
-  users.set(username, { password });
-  contacts.set(username, new Set());
+  await addUser(username, password);
   
   res.json({ success: true, username });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
   }
   
-  const user = users.get(username);
+  const user = await getUser(username);
   if (!user || user.password !== password) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
@@ -80,18 +143,14 @@ app.post('/api/login', (req, res) => {
 });
 
 // Contacts endpoints
-app.get('/api/contacts/:username', (req, res) => {
+app.get('/api/contacts/:username', async (req, res) => {
   const { username } = req.params;
-  const userContacts = contacts.get(username);
+  const userContacts = await getContacts(username);
   
-  if (!userContacts) {
-    return res.json({ contacts: [] });
-  }
-  
-  res.json({ contacts: Array.from(userContacts) });
+  res.json({ contacts: userContacts });
 });
 
-app.post('/api/contacts', (req, res) => {
+app.post('/api/contacts', async (req, res) => {
   const { username, contact } = req.body;
   
   if (!username || !contact) {
@@ -102,46 +161,33 @@ app.post('/api/contacts', (req, res) => {
     return res.status(400).json({ error: 'Cannot add yourself as contact' });
   }
   
-  if (!users.has(contact)) {
+  const exists = await userExists(contact);
+  if (!exists) {
     return res.status(404).json({ error: 'User not found' });
   }
   
-  // Add contact (bidirectional)
-  if (!contacts.has(username)) {
-    contacts.set(username, new Set());
-  }
-  if (!contacts.has(contact)) {
-    contacts.set(contact, new Set());
-  }
-  
-  contacts.get(username).add(contact);
-  contacts.get(contact).add(username);
+  await addContact(username, contact);
   
   res.json({ success: true });
 });
 
-app.delete('/api/contacts', (req, res) => {
+app.delete('/api/contacts', async (req, res) => {
   const { username, contact } = req.body;
   
   if (!username || !contact) {
     return res.status(400).json({ error: 'Username and contact required' });
   }
   
-  // Remove contact (bidirectional)
-  if (contacts.has(username)) {
-    contacts.get(username).delete(contact);
-  }
-  if (contacts.has(contact)) {
-    contacts.get(contact).delete(username);
-  }
+  await removeContact(username, contact);
   
   res.json({ success: true });
 });
 
 // Check if user exists
-app.get('/api/users/:username', (req, res) => {
+app.get('/api/users/:username', async (req, res) => {
   const { username } = req.params;
-  res.json({ exists: users.has(username) });
+  const exists = await userExists(username);
+  res.json({ exists });
 });
 
 // Socket.io signaling
@@ -168,12 +214,8 @@ io.on('connection', (socket) => {
   socket.on('call-request', ({ to, from }) => {
     console.log(`Call request from ${from} to ${to}`);
     
-    const callId = `${from}_${to}_${Date.now()}`;
-    pendingCalls.set(callId, { from, to, timestamp: Date.now() });
-    
     // Emit to target user (all their connections)
     emitToUser(to, 'call-request-received', {
-      callId,
       from,
       to
     });
@@ -200,7 +242,6 @@ io.on('connection', (socket) => {
   // Video request
   socket.on('video-request', ({ to, from, type }) => {
     console.log(`Video request: from=${from}, to=${to}, type=${type}`);
-    console.log(`userConnections map:`, Array.from(userConnections.keys()));
     emitToUser(to, 'video-request-received', { from, type });
   });
 

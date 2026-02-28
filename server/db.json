@@ -1,0 +1,22 @@
+{
+  "users": [
+    {
+      "username": "testa",
+      "password": "asdf"
+    },
+    {
+      "username": "test",
+      "password": "asdf"
+    }
+  ],
+  "contacts": [
+    {
+      "username": "testa",
+      "contact": "test"
+    },
+    {
+      "username": "test",
+      "contact": "testa"
+    }
+  ]
+}

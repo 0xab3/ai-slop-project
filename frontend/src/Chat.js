@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
+import { initDB, saveMessage, getMessages } from './db';
 import './App.css';
 
 const SOCKET_URL = window.location.origin;
@@ -103,6 +104,18 @@ const Chat = () => {
       return;
     }
 
+    // Initialize IndexedDB and load messages
+    initDB().then(() => {
+      getMessages(username, toUser).then(loadedMessages => {
+        const formattedMessages = loadedMessages.map(msg => ({
+          text: msg.text,
+          timestamp: new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          remote: msg.sender !== username
+        }));
+        setMessages(formattedMessages);
+      }).catch(err => console.error('Error loading messages:', err));
+    }).catch(err => console.error('Error initializing DB:', err));
+
     // Connect to signaling server
     const newSocket = io(SOCKET_URL);
     setSocket(newSocket);
@@ -196,6 +209,13 @@ const Chat = () => {
     channel.onmessage = (event) => {
       const message = JSON.parse(event.data);
       setMessages(prev => [...prev, { ...message, remote: true }]);
+      
+      // Save received message to IndexedDB
+      saveMessage({
+        sender: toUser,
+        receiver: username,
+        text: message.text
+      }).catch(err => console.error('Error saving received message:', err));
     };
 
     channel.onclose = () => {
@@ -351,6 +371,14 @@ const Chat = () => {
 
     dataChannelRef.current.send(JSON.stringify(message));
     setMessages(prev => [...prev, { ...message, remote: false }]);
+    
+    // Save to IndexedDB
+    saveMessage({
+      sender: username,
+      receiver: toUser,
+      text: inputMessage
+    }).catch(err => console.error('Error saving message:', err));
+    
     setInputMessage('');
   };
 
