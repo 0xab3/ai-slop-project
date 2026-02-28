@@ -90,6 +90,7 @@ const userConnections = new Map(); // username -> Set of socket objects
 
 // Store active rooms
 const rooms = new Map();
+const userToRoom = new Map(); // username -> roomId
 
 // Helper: emit to all user's connections
 function emitToUser(username, event, data) {
@@ -212,7 +213,22 @@ io.on('connection', (socket) => {
 
   // Call request
   socket.on('call-request', ({ to, from }) => {
-    console.log(`Call request from ${from} to ${to}`);
+    console.log(`[call-request] from=${from}, to=${to}`);
+    
+    // Check if either user is already in a room together
+    const roomId = getRoomId(from, to);
+    const fromUserRoom = userToRoom.get(from);
+    const toUserRoom = userToRoom.get(to);
+    
+    console.log(`[call-request] roomId=${roomId}, fromUserRoom=${fromUserRoom}, toUserRoom=${toUserRoom}`);
+    
+    // If either user is already in this room, just join without notification
+    if (fromUserRoom === roomId || toUserRoom === roomId) {
+      console.log(`[room-already-active] User already in room ${roomId}, notifying both users`);
+      emitToUser(to, 'room-already-active', { roomId, peer: from });
+      emitToUser(from, 'room-already-active', { roomId, peer: to });
+      return;
+    }
     
     // Emit to target user (all their connections)
     emitToUser(to, 'call-request-received', {
@@ -258,7 +274,7 @@ io.on('connection', (socket) => {
   });
 
   // Join a room
-  socket.on('join-room', ({ roomId, peerId }) => {
+  socket.on('join-room', ({ roomId, peerId, username }) => {
     const room = rooms.get(roomId);
     
     if (room && room.peers.size >= 2) {
@@ -278,8 +294,14 @@ io.on('connection', (socket) => {
 
     const roomData = rooms.get(roomId);
     roomData.peers.set(peerId, socket.id);
-
-    console.log(`Peer ${peerId} joined room ${roomId}. Total peers: ${roomData.peers.size}`);
+    
+    // Track which user is in which room
+    if (username) {
+      userToRoom.set(username, roomId);
+      console.log(`[join-room] User ${username} (peerId=${peerId}) joined room ${roomId}. Total peers: ${roomData.peers.size}`);
+    } else {
+      console.log(`[join-room] Peer ${peerId} joined room ${roomId}. Total peers: ${roomData.peers.size} (no username)`);
+    }
 
     socket.to(roomId).emit('peer-joined', { peerId });
 
@@ -310,8 +332,13 @@ io.on('connection', (socket) => {
   });
 
   // Handle leaving room
-  socket.on('leave-room', ({ roomId, peerId }) => {
+  socket.on('leave-room', ({ roomId, peerId, username }) => {
     handlePeerLeave(roomId, peerId);
+    // Explicitly clear userToRoom when user intentionally leaves
+    if (username) {
+      console.log(`[leave-room] User ${username} explicitly left room ${roomId}`);
+      userToRoom.delete(username);
+    }
   });
 
   // Handle disconnect
@@ -344,19 +371,20 @@ io.on('connection', (socket) => {
 
   function handlePeerLeave(roomId, peerId) {
     const room = rooms.get(roomId);
+    
     if (room) {
       room.peers.delete(peerId);
       socket.to(roomId).emit('peer-left', { peerId });
       
-      if (room.peers.size === 0) {
-        rooms.delete(roomId);
-        console.log(`Room ${roomId} deleted (empty)`);
-      }
+      // Don't delete room - other peer may still be connected and waiting
+      console.log(`[peer-left] Peer ${peerId} left room ${roomId}. Remaining peers: ${room.peers.size}`);
     }
     if (currentRoom === roomId) {
       socket.leave(roomId);
       currentRoom = null;
     }
+    
+    // Note: don't remove from userToRoom on disconnect - the other peer may still be in the room
   }
 });
 

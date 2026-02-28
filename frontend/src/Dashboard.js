@@ -52,6 +52,13 @@ const Dashboard = () => {
       }
     });
 
+    newSocket.on('room-already-active', ({ roomId, peer }) => {
+      console.log('[room-already-active] Room already active, joining:', peer, 'roomId:', roomId);
+      setCallStatus('');
+      localStorage.setItem('callWith', peer);
+      navigate('/chat');
+    });
+
     return () => {
       newSocket.disconnect();
     };

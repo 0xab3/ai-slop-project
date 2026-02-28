@@ -126,8 +126,9 @@ const Chat = () => {
     const pc = createPeerConnection(newSocket);
     setPeerConnection(pc);
 
+    console.log('[Chat] Joining room:', roomId, 'peerId:', peerId, 'username:', username);
     // Join the room
-    newSocket.emit('join-room', { roomId, peerId });
+    newSocket.emit('join-room', { roomId, peerId, username });
 
     return () => {
       newSocket.disconnect();
